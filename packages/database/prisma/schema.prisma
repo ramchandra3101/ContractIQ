@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  FAILED
+  DELETING
+}
+enum JobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+enum FieldState {
+  PRESENT
+  ABSENT
+  UNKNOWN
+  ERROR
+}
+model Document {
+  id             String @id @default(uuid()) @db.Uuid
+  ownerId        String
+  idempotencyKey String
+  checksum       String @db.Char(64)
+  objectKey      String @unique
+  filename       String
+  sizeBytes      Int
+  pageCount      Int
+  currentVersion Int @default(1)
+  status         DocumentStatus @default(UPLOADED)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime
+  jobs           ProcessingJob[]
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, createdAt])
+  @@index([expiresAt, status])
+}
+model ProcessingJob {
+  id              String @id @default(uuid()) @db.Uuid
+  documentId      String @db.Uuid
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version         Int
+  status          JobStatus @default(PENDING)
+  pipelineVersion String
+  config          Json
+  attempts        Int @default(0)
+  errorCode       String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  heartbeatAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  transitions     Json @default("[]")
+  pages           PageArtifact[]
+  fields          ExtractedField[]
+  invocations     ModelInvocation[]
+  outboxEvents    OutboxEvent[]
+  @@unique([documentId, version])
+  @@index([status, updatedAt])
+}
+model PageArtifact {
+  id           String @id @default(uuid()) @db.Uuid
+  jobId        String @db.Uuid
+  job          ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  pageNumber   Int
+  parser       String
+  parserVersion String
+  routingReason String
+  inspection   Json
+  text         String
+  blocks       Json
+  warnings     Json
+  durationMs   Int
+  @@unique([jobId, pageNumber])
+}
+model ExtractedField {
+  id           String @id @default(uuid()) @db.Uuid
+  jobId        String @db.Uuid
+  job          ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  category     String
+  instance     Int @default(0)
+  state        FieldState
+  value        String?
+  evidence     Json
+  supported    Boolean?
+  errorCode    String?
+  @@unique([jobId, category, instance])
+}
+model ModelInvocation {
+  id             String @id @default(uuid()) @db.Uuid
+  jobId          String @db.Uuid
+  job            ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  invocationKey  String
+  provider       String
+  model          String
+  promptVersion  String
+  inputTokens    Int?
+  outputTokens   Int?
+  estimatedCost  Decimal? @db.Decimal(14, 8)
+  pricingVersion String?
+  durationMs     Int
+  status         String
+  createdAt      DateTime @default(now())
+  @@unique([jobId, invocationKey])
+}
+model OutboxEvent {
+  id           String @id @default(uuid()) @db.Uuid
+  jobId        String @db.Uuid
+  job          ProcessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type         String
+  payload      Json
+  createdAt    DateTime @default(now())
+  publishedAt  DateTime?
+  attempts     Int @default(0)
+  availableAt  DateTime @default(now())
+  leaseUntil   DateTime?
+  errorCode    String?
+  @@unique([jobId, type])
+  @@index([publishedAt, availableAt])
+}
