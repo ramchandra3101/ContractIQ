@@ -20,11 +20,11 @@ export const configSchema = z.object({
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().max(104857600).default(20971520),
   MAX_PDF_PAGES: z.coerce.number().int().positive().max(5000).default(500),
   DOCUMENT_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
-  LLM_PROVIDER: z.enum(['mock', 'openai']).default('mock'),
-  OPENAI_API_KEY: z.string().min(1).optional(),
+  LLM_PROVIDER: z.enum(['mock', 'anthropic']).default('mock'),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
 }).superRefine((config, ctx) => {
-  if (config.LLM_PROVIDER === 'openai' && !config.OPENAI_API_KEY) {
-    ctx.addIssue({ code: 'custom', path: ['OPENAI_API_KEY'], message: 'Required for OpenAI provider' });
+  if (config.LLM_PROVIDER === 'anthropic' && !config.ANTHROPIC_API_KEY) {
+    ctx.addIssue({ code: 'custom', path: ['ANTHROPIC_API_KEY'], message: 'Required for Anthropic provider' });
   }
 });
 export type Config = z.infer<typeof configSchema>;

@@ -64,6 +64,19 @@ describe('security and errors', () => {
     const response = await app.inject({ url: '/fail', headers: { authorization: `Bearer ${token}` } });
     expect(response.statusCode).toBe(500); expect(response.body).not.toContain('sensitive');
   });
+  it.each([
+    ['bad tokens', 'Bearer wrong-token'],
+    ['authenticated unknown routes', `Bearer ${token}`],
+  ])('rate limits %s before authentication and routing', async (_label, authorization) => {
+    const app = setup();
+    const codes = [];
+    for (let i = 0; i < 121; i++) codes.push((await app.inject({ url: '/api/v1/documents', headers: { authorization } })).statusCode);
+    expect(new Set(codes.slice(0, 120)).has(429)).toBe(false);
+    const limited = await app.inject({ url: '/api/v1/documents', headers: { authorization } });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error.code).toBe('RATE_LIMITED');
+    expect(limited.headers['x-request-id']).toBe(limited.json().error.requestId);
+  });
   it('closes owned dependency resources', async () => {
     const close = vi.fn(async () => {});
     const app = buildApp(loadConfig(env), { checks: { postgres: async () => {}, redis: async () => {}, storage: async () => {} }, close });
@@ -72,7 +85,7 @@ describe('security and errors', () => {
 });
 describe('configuration', () => {
   it('defaults to mock without a paid key', () => { expect(loadConfig(env).LLM_PROVIDER).toBe('mock'); });
-  it.each([{ PORT: '0' }, { DATABASE_URL: 'https://wrong' }, { API_KEYS_JSON: '{}' }, { API_KEYS_JSON: 'invalid' }, { LLM_PROVIDER: 'openai' }, { MAX_UPLOAD_BYTES: '-1' }])('rejects invalid config: %j', override => {
+  it.each([{ PORT: '0' }, { DATABASE_URL: 'https://wrong' }, { API_KEYS_JSON: '{}' }, { API_KEYS_JSON: 'invalid' }, { LLM_PROVIDER: 'anthropic' }, { LLM_PROVIDER: 'openai' }, { MAX_UPLOAD_BYTES: '-1' }])('rejects invalid config: %j', override => {
     expect(() => loadConfig({ ...env, ...override })).toThrow('Invalid configuration');
   });
   it('does not leak secrets in config errors', () => {

@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import type { Config } from '@contractiq/core';
 
@@ -33,11 +33,16 @@ export function buildApp(config: Config, deps: Dependencies): FastifyInstance {
   });
   app.decorateRequest('ownerId', null);
   const keys = config.API_KEYS_JSON.map(key => ({ digest: hash(key.token), ownerId: key.ownerId }));
-  app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
   app.addHook('onRequest', async (request, reply) => {
     reply.header('x-request-id', request.id);
     reply.header('cache-control', 'no-store');
     reply.header('x-content-type-options', 'nosniff');
+  });
+  // global: true attaches route-level hooks, which run after the auth hook, so 401s and 404s
+  // were never counted. An app-level hook registered before auth limits every request.
+  app.register(rateLimit, { global: false, max: 120, timeWindow: '1 minute' });
+  app.after(() => { app.addHook('onRequest', app.rateLimit()); app.addHook('onRequest', authenticate); });
+  async function authenticate(request: FastifyRequest, reply: FastifyReply) {
     const path = request.url.split('?')[0];
     if (path === '/health/live' || path === '/health/ready') return;
     const auth = request.headers.authorization;
@@ -46,7 +51,7 @@ export function buildApp(config: Config, deps: Dependencies): FastifyInstance {
     for (const key of keys) if (timingSafeEqual(digest, key.digest)) ownerId = key.ownerId;
     if (!ownerId) return reply.code(401).send({ error: { code: 'UNAUTHORIZED', message: 'Valid bearer token required', requestId: request.id } });
     request.ownerId = ownerId;
-  });
+  }
   app.setErrorHandler((error, request, reply) => {
     const statusCode = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : undefined;
     const status = typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500 ? statusCode : 500;

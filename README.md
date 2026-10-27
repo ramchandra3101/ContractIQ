@@ -2,9 +2,15 @@
 
 Node.js / TypeScript document intelligence pipeline. **Current implementation: Milestone 1 foundation.** Document upload, processing, OCR, extraction, and evaluation are not implemented yet. No extraction or benchmark results are claimed.
 
+Follow the [complete implementation plan](docs/implementation-plan.md) for current status, all six milestones, remaining requirements, acceptance tests, and the release checklist.
+
 ## Requirements and local setup
 
 Node.js 24 LTS, pnpm 10.28.2, and Docker Compose v2.
+
+Use **pnpm**, not `npm install`, to install this repository's dependencies. After cloning, run the commands below from the repository root. One `pnpm install` creates the root and package-level `node_modules` directories automatically, including dependency links for `apps/api` and `packages/*`. No separate install inside each package is needed. These directories are generated locally and excluded from Git.
+
+If Corepack is unavailable, install pnpm with `npm install -g pnpm@10.28.2` and skip the two Corepack commands below.
 
 ```sh
 corepack enable
@@ -12,7 +18,7 @@ corepack prepare pnpm@10.28.2 --activate
 cp .env.example .env
 pnpm install
 pnpm build
-docker compose up -d postgres redis minio minio-init
+docker compose up -d postgres redis storage storage-init
 # Export DATABASE_URL for Prisma CLI (the API dev command loads .env automatically).
 export DATABASE_URL='postgresql://contractiq:local-postgres-password@localhost:5432/contractiq'
 pnpm db:migrate
@@ -29,11 +35,13 @@ pnpm lint
 pnpm build
 ```
 
-Liveness returns 200 while the API is serving. Readiness checks PostgreSQL, Redis, and the configured MinIO bucket concurrently, returning 503 on dependency failure or timeout. It does not yet validate migration compatibility.
+Liveness returns 200 while the API is serving. Readiness checks PostgreSQL, Redis, and the configured S3 bucket (RustFS locally) concurrently, returning 503 on dependency failure or timeout. It does not yet validate migration compatibility.
 
 API routes require `Authorization: Bearer <token>`. `API_KEYS_JSON` maps tokens to owner IDs; tokens must have at least 32 characters. For example, the local example token maps to `local-user`. Health routes are public. Unknown authenticated routes return a consistent 404; unimplemented document endpoints do not pretend to accept work.
 
-`pnpm eval` deliberately exits with an explanatory error until Milestone 5. The `mock` configuration default requires no paid API key; a mock extraction provider will be implemented in Milestone 4.
+`pnpm eval` deliberately exits with an explanatory error until Milestone 5. The `mock` configuration default requires no paid API key; a mock extraction provider will be implemented in Milestone 4. `LLM_PROVIDER=anthropic` requires `ANTHROPIC_API_KEY`.
+
+Target stack: Fastify, Zod, Prisma/PostgreSQL, Redis/BullMQ, RustFS (local S3)/GCS, LlamaParse (parsing arms), Anthropic SDK (multimodal arm and structured extraction), DuckDB (evaluation analytics), Arize Phoenix (tracing), Cloud Run (deployment). LlamaParse and Anthropic receive full contract content; use public CUAD data until a data-processing decision exists for private contracts.
 
 ## Workspace
 

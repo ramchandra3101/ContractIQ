@@ -1,8 +1,10 @@
 # ContractIQ architecture and implementation ledger
 
+The [implementation plan](implementation-plan.md) is the canonical delivery checklist and status tracker. This document is a shorter architecture overview.
+
 ## Implemented: foundation (Milestone 1)
 
-Fastify API and shared strict TypeScript packages. Zod validates environment configuration before startup. Prisma defines all six requested models and database uniqueness constraints. PostgreSQL, persistent Redis (AOF, no eviction), MinIO and bucket initialization run through Compose. Health probes are bounded and independent of authentication. API authentication resolves a server-configured token to an owner ID. Authorization on documents will be enforced when document routes are added.
+Fastify API and shared strict TypeScript packages. Zod validates environment configuration before startup. Prisma defines all six requested models and database uniqueness constraints. PostgreSQL, persistent Redis (AOF, no eviction), RustFS (S3-compatible; replaced MinIO, whose images left Docker Hub) and bucket initialization run through Compose. Health probes are bounded and independent of authentication. API authentication resolves a server-configured token to an owner ID. Authorization on documents will be enforced when document routes are added.
 
 Database constraints reserve the following invariants:
 
@@ -18,24 +20,24 @@ These constraints alone do not implement job processing or exactly-once external
 
 ## Planned: durable ingestion (Milestone 2)
 
-Stream authenticated uploads into bounded temporary storage, inspect PDF signature and structure in a resource-limited child process, and enforce page limits. Write content to MinIO before committing Document, ProcessingJob, and OutboxEvent in a single PostgreSQL transaction. Reconcile orphaned objects when database commit fails. Claim outbox records with expiring leases and publish stable BullMQ job IDs. A crash after queue publication but before marking the outbox row published may republish; worker database claims must prevent duplicate execution. Reconcile failed and missing queue jobs against database state. Add ownership-filtered document, job, result and page routes plus idempotent reprocessing.
+Stream authenticated uploads into bounded temporary storage, inspect PDF signature and structure in a resource-limited child process, and enforce page limits. Write content to object storage before committing Document, ProcessingJob, and OutboxEvent in a single PostgreSQL transaction. Reconcile orphaned objects when database commit fails. Claim outbox records with expiring leases and publish stable BullMQ job IDs. A crash after queue publication but before marking the outbox row published may republish; worker database claims must prevent duplicate execution. Reconcile failed and missing queue jobs against database state. Add ownership-filtered document, job, result and page routes plus idempotent reprocessing.
 
-## Planned: parsers and routing (Milestone 3)
+## Planned: parser arms (Milestone 3)
 
-DocumentParser interface and separate PDF.js, Tesseract and vision adapters. Preserve page/block references and real coordinates only. Inspect text count, image coverage, corruption, rotation and layout. Default to reliable native text; route scans to OCR with bounded CLI subprocesses, pixel/page limits, timeouts and container isolation. Store routing thresholds and decisions with each processing version.
+One DocumentParser contract with interchangeable arms so evaluation can hold everything downstream constant: LlamaParse tiers `fast` (no AI model, OCR-style), `cost_effective`, `agentic` and `agentic_plus`, plus a `claude-pdf` multimodal arm that passes the PDF directly to Claude. PDF.js stays only for local validation and page counting. Parser output is cached by `(checksum, arm, version)` in object storage so retries never pay twice. Each page records billed units and cost.
 
 ## Planned: grounded extraction (Milestone 4)
 
-OpenAI Responses structured outputs and deterministic MockProvider. Five initial CUAD categories with a schema extensible to 41. Separate present, absent, unknown and error states. Candidate retrieval and overlapping windows retain source offsets. Verify each quotation against source text and preserve multiple instances. Enforce per-document budgets before paid calls; account for uncertain costs after interrupted calls.
+Anthropic SDK `messages.parse` with Zod structured outputs (`zodOutputFormat`) and a deterministic MockProvider. Five initial CUAD categories, registry extensible to 41, each tagged with its field type. Separate present, absent, unknown and error states. Bounded overlapping windows. Anthropic citations cannot be combined with structured outputs, so quotations are verified by our own code against the reference text. Schema validation outcomes (valid, Zod-rejected, refused, truncated, retried) are recorded per call. Arize Phoenix traces LLM and parser calls via OpenInference.
 
-## Planned: evaluation (Milestone 5)
+## Planned: evaluation and analytics (Milestone 5)
 
-TypeScript official CUAD downloader/preparer, contract-disjoint splits, one-to-one span matching, exact and token-overlap precision/recall/F1, micro/macro metrics, no-answer accuracy, evidence/schema rates, latency percentiles, cost and routing counts. Compare strategies on identical eligible contracts, report unsupported cases and keep synthetic scans in a separate derived dataset. Export measured JSON/CSV/Markdown only.
+TypeScript CUAD preparation, contract-disjoint splits, one-to-one span matching, per-field and per-field-type precision/recall/F1, no-answer accuracy, schema validity and evidence support rates, latency and cost. Every parser arm runs on the same eligible contracts. Results are written as Parquet and loaded into a per-run DuckDB file; reports are SQL over DuckDB. PostgreSQL stays the operational store; DuckDB is analytics only.
 
-## Planned: operational hardening (Milestone 6)
+## Planned: Cloud Run and hardening (Milestone 6)
 
-OpenTelemetry tracing without sensitive text, optional budgeted vision escalation, retention cleanup, adversarial PDF/OCR and ownership tests, deployment runbook. Seed PDF contracts and mock extraction fixtures arrive with parser/extraction milestones. No Python service or scripts are required.
+API on Cloud Run, worker on Cloud Run with min instances 1 (BullMQ cannot scale to zero), Cloud SQL, Memorystore, GCS through the S3 interoperability API, eval as a Cloud Run job, Secret Manager, Arize AX or self-hosted Phoenix. Retention cleanup, adversarial PDF and ownership tests, runbooks.
 
 ## Validation boundary
 
-Unit tests inject dependency probes to test failures deterministically. They are not evidence that PostgreSQL, Redis or MinIO are running. CI's Compose smoke test exercises real migrations and readiness. Local Docker checks require Docker to be installed and running.
+Unit tests inject dependency probes to test failures deterministically. They are not evidence that PostgreSQL, Redis or object storage are running. CI's Compose smoke test exercises real migrations and readiness. Local Docker checks require Docker to be installed and running.
